@@ -1,0 +1,10 @@
+# PurpleAir AQI Animation - Core Requirements Only
+# This file contains only essential packages that work on all systems
+# Install with: pip install -r requirements-core.txt
+
+requests>=2.31.0
+pandas>=2.0.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+Pillow>=10.0.0
+cachetools>=5.3.0
