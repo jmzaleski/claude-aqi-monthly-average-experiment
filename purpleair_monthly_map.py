@@ -264,16 +264,12 @@ def create_monthly_map(sensors_avg_df, bbox, region_name, month_str, output_path
             
             # Set figure size to match background image aspect ratio
             img_height, img_width = bg_array.shape[:2]
-            aspect_ratio = img_width / img_height
-            fig_height = 12
-            fig_width = fig_height * aspect_ratio
-            
-            print(f"  Background image: {img_width}x{img_height} pixels (aspect: {aspect_ratio:.2f})")
+            print(f"  Background image: {img_width}x{img_height} pixels")
         except Exception as e:
             print(f"  Warning: Could not load background image: {e}")
     
-    # Create figure sized to match background
-    fig = plt.figure(figsize=(fig_width, fig_height))
+    # Create figure - use large size, bbox_inches='tight' will crop appropriately
+    fig = plt.figure(figsize=(20, 16))
     ax = fig.add_subplot(111)
     
     # Load and display background image
@@ -319,11 +315,9 @@ def create_monthly_map(sensors_avg_df, bbox, region_name, month_str, output_path
                 zorder=6
             )
     
-    # Set map bounds
-    nwlat, nwlng, selat, selng = bbox
-    margin = 0.02
-    ax.set_xlim(nwlng - margin, selng + margin)
-    ax.set_ylim(selat - margin, nwlat + margin)
+    # Set map bounds - match background extent exactly (no margins)
+    ax.set_xlim(nwlng, selng)
+    ax.set_ylim(selat, nwlat)
     
     ax.set_xlabel('Longitude', fontsize=14, fontweight='bold')
     ax.set_ylabel('Latitude', fontsize=14, fontweight='bold')
@@ -369,14 +363,12 @@ def create_monthly_map(sensors_avg_df, bbox, region_name, month_str, output_path
             family='monospace'
         )
     
-    # Save
-    plt.tight_layout()
-    fig.savefig(output_path, dpi=dpi, bbox_inches='tight')
+    # Save with tight bounding box and minimal padding
+    fig.savefig(output_path, dpi=dpi, bbox_inches='tight', pad_inches=0.2)
     plt.close(fig)
     
     print(f"  ✓ Map saved to: {output_path}")
     print(f"  Resolution: {dpi} DPI")
-    print("bbox",bbox)
     
     return True
 
