@@ -141,7 +141,7 @@ def fetch_monthly_data(api_key, sensors_df, year, month, output_csv):
         params = {
             "start_timestamp": int(start_time.timestamp()),
             "end_timestamp": int(end_time.timestamp()),
-            "average": 0,  # Real-time data (most granular)
+            "average": 10,  # Real-time data (most granular)
             "fields": "pm2.5_atm"
         }
         
@@ -234,7 +234,7 @@ def calculate_monthly_averages(sensors_df, historical_df):
 
 
 def create_monthly_map(sensors_avg_df, bbox, region_name, month_str, output_path, 
-                       background_image=None, dpi=150):
+                       background_image=None, dpi=300):
     """
     Create a single static map showing monthly average AQI at each sensor.
     
@@ -252,6 +252,7 @@ def create_monthly_map(sensors_avg_df, bbox, region_name, month_str, output_path
     # Create figure
     fig = plt.figure(figsize=(16, 12))
     ax = fig.add_subplot(111)
+    ax.set_aspect('equal', adjustable='box')
     
     # Load and display background image
     if background_image is not None:
@@ -262,7 +263,6 @@ def create_monthly_map(sensors_avg_df, bbox, region_name, month_str, output_path
             nwlat, nwlng, selat, selng = bbox
             ax.imshow(bg_array,
                      extent=[nwlng, selng, selat, nwlat],
-                     aspect='auto',
                      zorder=0,
                      alpha=1.0)
             print(f"  Background image loaded: {background_image}")
@@ -361,6 +361,7 @@ def create_monthly_map(sensors_avg_df, bbox, region_name, month_str, output_path
     
     print(f"  ✓ Map saved to: {output_path}")
     print(f"  Resolution: {dpi} DPI")
+    print("bbox",bbox)
     
     return True
 
@@ -394,8 +395,8 @@ Examples:
                        help='Output image filename (e.g., jan2026_aqi.png)')
     parser.add_argument('--background', type=str, default=None,
                        help='Path to georeferenced background image (TIF/PNG/JPG)')
-    parser.add_argument('--region', type=str, default='golden',
-                       choices=['golden', 'vancouver', 'victoria', 'custom'],
+    parser.add_argument('--region', type=str, default='golden_town',
+                       choices=['golden_town','golden', 'vancouver', 'victoria', 'custom'],
                        help='Predefined region (default: golden)')
     parser.add_argument('--bbox', type=str, default=None,
                        help='Custom bounding box: "nwlat,nwlng,selat,selng"')
@@ -427,6 +428,11 @@ Examples:
     
     # Define regions
     REGIONS = {
+        #from matz caltopo map https://caltopo.com/m/A02KGUS
+        'golden_town': {
+            'bbox': (51.31, -117.00, 51.28, -116.94), #from matz caltopo map https://caltopo.com/m/A02KGUS
+            'name': 'Golden Region, BC'
+        },
         'golden': {
             'bbox': (51.5, -117.5, 51.0, -116.25),
             'name': 'Golden Region, BC'
@@ -456,6 +462,7 @@ Examples:
             sys.exit(1)
         REGION_NAME = args.region_name or "Custom Region"
     else:
+        print("args.region", args.region)
         BBOX = REGIONS[args.region]['bbox']
         REGION_NAME = args.region_name or REGIONS[args.region]['name']
     
