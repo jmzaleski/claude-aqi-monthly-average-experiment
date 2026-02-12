@@ -249,10 +249,24 @@ def create_monthly_map(sensors_avg_df, bbox, region_name, month_str, output_path
     """
     print(f"\nCreating map...")
     
+    # Calculate bbox dimensions for proper aspect ratio
+    nwlat, nwlng, selat, selng = bbox
+    lat_range = abs(nwlat - selat)
+    lon_range = abs(selng - nwlng)
+    
+    # At ~51°N latitude, adjust for spherical earth (longitude degrees are compressed)
+    import math
+    avg_lat = (nwlat + selat) / 2
+    actual_aspect = lon_range * math.cos(math.radians(avg_lat)) / lat_range
+    
+    # Set figure size to match geographic aspect ratio
+    fig_height = 12
+    fig_width = fig_height * actual_aspect
+    
     # Create figure
-    fig = plt.figure(figsize=(16, 12))
+    fig = plt.figure(figsize=(fig_width, fig_height))
     ax = fig.add_subplot(111)
-    ax.set_aspect('equal', adjustable='box')
+    #ax.set_aspect('equal', adjustable='box')
     
     # Load and display background image
     if background_image is not None:
@@ -260,9 +274,9 @@ def create_monthly_map(sensors_avg_df, bbox, region_name, month_str, output_path
             bg_img = Image.open(background_image)
             bg_array = np.array(bg_img)
             
-            nwlat, nwlng, selat, selng = bbox
             ax.imshow(bg_array,
                      extent=[nwlng, selng, selat, nwlat],
+                     aspect='auto',  # Stretch to fill extent
                      zorder=0,
                      alpha=1.0)
             print(f"  Background image loaded: {background_image}")
