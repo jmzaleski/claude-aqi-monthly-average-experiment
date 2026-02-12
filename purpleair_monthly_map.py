@@ -294,7 +294,7 @@ def create_monthly_map(sensors_avg_df, bbox, region_name, month_str, output_path
             row['longitude'],
             row['latitude'],
             c=row['color'],
-            s=400,  # Larger than animation frames
+            s=750,  # even Larger than animation frames
             alpha=0.85,
             edgecolors='black',
             linewidths=2.5,
