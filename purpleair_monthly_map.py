@@ -249,39 +249,40 @@ def create_monthly_map(sensors_avg_df, bbox, region_name, month_str, output_path
     """
     print(f"\nCreating map...")
     
-    # Calculate bbox dimensions for proper aspect ratio
+    # Unpack bounding box
     nwlat, nwlng, selat, selng = bbox
-    lat_range = abs(nwlat - selat)
-    lon_range = abs(selng - nwlng)
     
-    # At ~51°N latitude, adjust for spherical earth (longitude degrees are compressed)
-    import math
-    avg_lat = (nwlat + selat) / 2
-    actual_aspect = lon_range * math.cos(math.radians(avg_lat)) / lat_range
+    # Load background image first to get its dimensions
+    bg_array = None
+    fig_width = 16  # default
+    fig_height = 12  # default
     
-    # Set figure size to match geographic aspect ratio
-    fig_height = 12
-    fig_width = fig_height * actual_aspect
-    
-    # Create figure
-    fig = plt.figure(figsize=(fig_width, fig_height))
-    ax = fig.add_subplot(111)
-    #ax.set_aspect('equal', adjustable='box')
-    
-    # Load and display background image
     if background_image is not None:
         try:
             bg_img = Image.open(background_image)
             bg_array = np.array(bg_img)
             
-            ax.imshow(bg_array,
-                     extent=[nwlng, selng, selat, nwlat],
-                     aspect='auto',  # Stretch to fill extent
-                     zorder=0,
-                     alpha=1.0)
-            print(f"  Background image loaded: {background_image}")
+            # Set figure size to match background image aspect ratio
+            img_height, img_width = bg_array.shape[:2]
+            aspect_ratio = img_width / img_height
+            fig_height = 12
+            fig_width = fig_height * aspect_ratio
+            
+            print(f"  Background image: {img_width}x{img_height} pixels (aspect: {aspect_ratio:.2f})")
         except Exception as e:
             print(f"  Warning: Could not load background image: {e}")
+    
+    # Create figure sized to match background
+    fig = plt.figure(figsize=(fig_width, fig_height))
+    ax = fig.add_subplot(111)
+    
+    # Load and display background image
+    if bg_array is not None:
+        ax.imshow(bg_array,
+                 extent=[nwlng, selng, selat, nwlat],
+                 aspect='auto',
+                 zorder=0,
+                 alpha=1.0)
     
     # Filter to sensors with data
     valid_sensors = sensors_avg_df[sensors_avg_df['avg_pm25'].notna()].copy()
