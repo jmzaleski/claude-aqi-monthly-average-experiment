@@ -5,8 +5,9 @@
 set -e
 
 # Configuration
-REGION="golden"
-BACKGROUND_IMAGE="purple-air-backgound-caltopo.jpeg"  # Set to your background image path, or leave empty
+REGION="golden_town" #just townsite
+#BACKGROUND_IMAGE="purple-air-backgound-caltopo.jpeg"
+BACKGROUND_IMAGE="purple-air-backgound-townsite.jpeg"  # Set to your background image path, or leave empty
 DATA_DIR="./purpleair_data"
 DPI=150
 
