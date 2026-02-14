@@ -254,29 +254,37 @@ def create_monthly_map(sensors_avg_df, bbox, region_name, month_str, output_path
     
     # Load background image first to get its dimensions
     bg_array = None
-    fig_width = 16  # default
-    fig_height = 12  # default
-    
     if background_image is not None:
         try:
             bg_img = Image.open(background_image)
             bg_array = np.array(bg_img)
-            
-            # Set figure size to match background image aspect ratio
             img_height, img_width = bg_array.shape[:2]
             print(f"  Background image: {img_width}x{img_height} pixels")
         except Exception as e:
             print(f"  Warning: Could not load background image: {e}")
     
-    # Create figure - use large size, bbox_inches='tight' will crop appropriately
-    fig = plt.figure(figsize=(20, 16))
+    # Create figure with appropriate aspect ratio
+    if bg_array is not None:
+        # Use background image dimensions to set figure size
+        img_h, img_w = bg_array.shape[:2]
+        fig_height = 12
+        fig_width = fig_height * (img_w / img_h)
+        fig = plt.figure(figsize=(fig_width, fig_height))
+    else:
+        # Default size if no background
+        fig = plt.figure(figsize=(16, 12))
+    
     ax = fig.add_subplot(111)
+    
+    # Set axis limits to match bbox (do this BEFORE imshow)
+    ax.set_xlim(nwlng, selng)
+    ax.set_ylim(selat, nwlat)
     
     # Load and display background image
     if bg_array is not None:
         ax.imshow(bg_array,
                  extent=[nwlng, selng, selat, nwlat],
-                 aspect='auto',
+                 aspect='auto',  # Stretch to fill axes
                  zorder=0,
                  alpha=1.0)
     
@@ -437,7 +445,7 @@ Examples:
     REGIONS = {
         #from matz caltopo map https://caltopo.com/m/A02KGUS
         'golden_town': {
-            'bbox': (51.31, -117.00, 51.28, -116.94), #from matz caltopo map https://caltopo.com/m/A02KGUS
+            'bbox': (51.31484, -117.00112, 51.28007, -116.93880), #from matz caltopo map https://caltopo.com/m/A02KGUS
             'name': 'Golden Region, BC'
         },
         'golden': {
