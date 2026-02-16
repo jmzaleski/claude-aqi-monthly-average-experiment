@@ -257,7 +257,57 @@ def calculate_hourly_averages(sensors_df, historical_df):
     # Merge with sensor locations
     result = hourly_avg.merge(sensors_df, on='sensor_index', how='left')
     
+    # PRINT DETAILED HOURLY TABLE FOR DEBUGGING
     print(f"\n  Calculated hourly averages for {len(sensors_df)} sensors × 24 hours")
+    print("\n" + "="*120)
+    print("HOURLY AVERAGE TABLE (AQI values)")
+    print("="*120)
+    
+    # Pivot to create sensor × hour table (using AQI values)
+    pivot_table = hourly_avg.pivot(index='sensor_index', columns='hour', values='aqi')
+    
+    # Add sensor names
+    pivot_with_names = pivot_table.merge(sensors_df[['sensor_index', 'name']], 
+                                         left_index=True, right_on='sensor_index')
+    pivot_with_names = pivot_with_names.set_index('name')
+    pivot_with_names = pivot_with_names.drop('sensor_index', axis=1)
+    
+    # Print header
+    print(f"{'Sensor':<25}", end='')
+    for hour in range(24):
+        if hour == 0:
+            label = "12a"
+        elif hour < 12:
+            label = f"{hour}a"
+        elif hour == 12:
+            label = "12p"
+        else:
+            label = f"{hour-12}p"
+        print(f"{label:>6}", end='')
+    print()
+    print("-" * 120)
+    
+    # Print each sensor's hourly AQI averages
+    for sensor_name, row in pivot_with_names.iterrows():
+        # Truncate sensor name
+        name_display = sensor_name[:23]
+        print(f"{name_display:<25}", end='')
+        
+        for hour in range(24):
+            val = row[hour] if hour in row.index else None
+            if pd.notna(val):
+                # AQI is already an integer, just print it
+                print(f"{int(val):>6}", end='')
+            else:
+                print(f"{'--':>6}", end='')
+        print()
+    
+    print("="*120)
+    print("\nNOTE: Compare these hourly AQI values to your monthly average AQI.")
+    print("If monthly average (e.g., 156) is MUCH higher than any hourly value,")
+    print("it means daily peaks occur at DIFFERENT hours on different days.")
+    print("="*120)
+    print()
     
     return result
 
