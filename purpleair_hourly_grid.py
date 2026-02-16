@@ -191,12 +191,63 @@ def calculate_hourly_averages(sensors_df, historical_df):
     # Apply timezone offset to convert UTC to local time
     historical_df['local_timestamp'] = historical_df['timestamp'] + pd.Timedelta(hours=TIMEZONE_OFFSET_HOURS)
     
-    # Extract hour from local timestamp
+    # Extract hour and date from local timestamp
     historical_df['hour'] = historical_df['local_timestamp'].dt.hour
+    historical_df['date'] = historical_df['local_timestamp'].dt.date
+    
+    # VALIDATION: Calculate daily max for comparison
+    print("\n  Validation: Comparing hourly averages with daily max method...")
+    daily_max = historical_df.groupby(['sensor_index', 'date'])['pm2.5'].max().reset_index()
+    daily_max_monthly_avg = daily_max.groupby('sensor_index')['pm2.5'].mean().reset_index()
+    daily_max_monthly_avg.rename(columns={'pm2.5': 'monthly_avg_of_daily_max'}, inplace=True)
     
     # For each sensor, for each hour, calculate average PM2.5
     hourly_avg = historical_df.groupby(['sensor_index', 'hour'])['pm2.5'].mean().reset_index()
     hourly_avg.rename(columns={'pm2.5': 'avg_pm25'}, inplace=True)
+    
+    # VALIDATION: For each sensor, find the max hourly average
+    hourly_max_by_sensor = hourly_avg.groupby('sensor_index')['avg_pm25'].max().reset_index()
+    hourly_max_by_sensor.rename(columns={'avg_pm25': 'max_hourly_avg'}, inplace=True)
+    
+    # Compare the two methods
+    validation = hourly_max_by_sensor.merge(daily_max_monthly_avg, on='sensor_index')
+    validation = validation.merge(sensors_df[['sensor_index', 'name']], on='sensor_index')
+    
+    print("\n  Sensor-by-sensor validation:")
+    print("  " + "="*70)
+    print(f"  {'Sensor':<20} {'Max Hourly Avg':>15} {'Monthly Avg Daily Max':>20}")
+    print("  " + "-"*70)
+    
+    all_good = True
+    for _, row in validation.iterrows():
+        sensor_name = row['name'][:18]  # Truncate long names
+        max_hourly = row['max_hourly_avg']
+        daily_max_avg = row['monthly_avg_of_daily_max']
+        
+        # The max hourly average should be close to (but likely less than) the monthly avg of daily maxes
+        # They measure different things but should be in the same ballpark
+        ratio = max_hourly / daily_max_avg if daily_max_avg > 0 else 0
+        status = "✓" if 0.5 <= ratio <= 1.5 else "⚠"
+        
+        print(f"  {status} {sensor_name:<20} {max_hourly:>15.1f} {daily_max_avg:>20.1f}")
+        
+        if not (0.3 <= ratio <= 2.0):  # Wider tolerance for assertion
+            all_good = False
+    
+    print("  " + "="*70)
+    
+    # ASSERTION: The calculations should be in the same ballpark
+    # Max hourly average might be less than monthly avg of daily max (which includes worst days)
+    # But they should be reasonably close
+    if not all_good:
+        print("\n  ⚠ WARNING: Large discrepancies detected between hourly and daily calculations!")
+        print("  This might indicate:")
+        print("    - Timezone offset is wrong (peaks appearing at wrong hours)")
+        print("    - Data quality issues")
+        print("    - Sensor reporting irregularities")
+        print("\n  Check TIMEZONE_OFFSET_HOURS constant and verify sensor data.")
+    else:
+        print("\n  ✓ Validation passed: Hourly and daily calculations are consistent")
     
     # Calculate AQI from average PM2.5
     hourly_avg['aqi'] = hourly_avg['avg_pm25'].apply(lambda x: calculate_aqi(x)[0])
@@ -206,7 +257,7 @@ def calculate_hourly_averages(sensors_df, historical_df):
     # Merge with sensor locations
     result = hourly_avg.merge(sensors_df, on='sensor_index', how='left')
     
-    print(f"  Calculated hourly averages for {len(sensors_df)} sensors × 24 hours")
+    print(f"\n  Calculated hourly averages for {len(sensors_df)} sensors × 24 hours")
     
     return result
 
