@@ -5,7 +5,7 @@ PurpleAir Hourly Pattern Grid Map Generator
 Creates a grid of maps showing average AQI at each hour of the day.
 Reveals time-based patterns like wood stove burning, traffic, etc.
 
-Layout: 4x2 grid showing 12am, 3am, 6am, 9am, 12pm, 3pm, 6pm, 9pm
+Layout: 6×4 grid showing all 24 hours (12am, 1am, 2am... 11pm)
 
 Usage:
     export PURPLEAIR_API_KEY="your-key-here"
@@ -37,6 +37,13 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from PIL import Image
 import time
+
+
+# TIMEZONE OFFSET: PurpleAir API returns UTC timestamps
+# Golden, BC is in Mountain Time (MST/MDT)
+# Set this to the hour offset from UTC to local time
+# MST = UTC-7, MDT = UTC-8 (use -7 for most of the year)
+TIMEZONE_OFFSET_HOURS = -7  # Adjust to local time from UTC
 
 
 # AQI calculation constants (US EPA standard for PM2.5)
@@ -179,9 +186,13 @@ def calculate_hourly_averages(sensors_df, historical_df):
     """
     print("\nCalculating hourly averages...")
     print("  Method: Average PM2.5 for each hour across all days in month")
+    print(f"  Timezone: Applying {TIMEZONE_OFFSET_HOURS:+d} hour offset from UTC")
     
-    # Add hour column
-    historical_df['hour'] = historical_df['timestamp'].dt.hour
+    # Apply timezone offset to convert UTC to local time
+    historical_df['local_timestamp'] = historical_df['timestamp'] + pd.Timedelta(hours=TIMEZONE_OFFSET_HOURS)
+    
+    # Extract hour from local timestamp
+    historical_df['hour'] = historical_df['local_timestamp'].dt.hour
     
     # For each sensor, for each hour, calculate average PM2.5
     hourly_avg = historical_df.groupby(['sensor_index', 'hour'])['pm2.5'].mean().reset_index()
@@ -269,12 +280,11 @@ def create_single_hour_map(ax, sensors_hourly_df, hour, bbox, background_array):
 def create_hourly_grid(sensors_df, hourly_df, bbox, region_name, month_str,
                        output_path, background_image=None, dpi=150):
     """
-    Create 4×2 grid of maps showing hourly patterns.
+    Create 6×4 grid of maps showing all 24 hours of the day.
     
-    Hours: 12am, 3am, 6am, 9am (top row)
-           12pm, 3pm, 6pm, 9pm (bottom row)
+    Layout: 4 columns × 6 rows = 24 hours
     """
-    print(f"\nCreating hourly grid map...")
+    print(f"\nCreating 24-hour grid map...")
     
     # Unpack bounding box
     nwlat, nwlng, selat, selng = bbox
@@ -289,24 +299,24 @@ def create_hourly_grid(sensors_df, hourly_df, bbox, region_name, month_str,
         except Exception as e:
             print(f"  Warning: Could not load background image: {e}")
     
-    # Key hours to display (every 3 hours)
-    hours_to_show = [0, 3, 6, 9, 12, 15, 18, 21]
+    # All 24 hours
+    hours_to_show = list(range(24))  # 0, 1, 2, ..., 23
     
-    # Create figure with 4×2 grid
-    fig = plt.figure(figsize=(20, 10))
+    # Create figure with 4 columns × 6 rows
+    fig = plt.figure(figsize=(16, 24))
     
     # Main title
-    fig.suptitle(f'Hourly Air Quality Patterns - {region_name} - {month_str}',
-                fontsize=16, fontweight='bold', y=0.98)
+    fig.suptitle(f'24-Hour Air Quality Patterns - {region_name} - {month_str}',
+                fontsize=16, fontweight='bold', y=0.995)
     
-    # Create 4×2 grid
+    # Create 6×4 grid (4 columns, 6 rows)
     for idx, hour in enumerate(hours_to_show):
-        # Position in grid (2 rows, 4 columns)
+        # Position in grid (6 rows, 4 columns)
         row = idx // 4
         col = idx % 4
         
         # Create subplot
-        ax = plt.subplot(2, 4, idx + 1)
+        ax = plt.subplot(6, 4, idx + 1)
         
         # Filter data for this hour
         hour_data = hourly_df[hourly_df['hour'] == hour].copy()
@@ -325,10 +335,10 @@ def create_hourly_grid(sensors_df, hourly_df, bbox, region_name, month_str,
     ]
     
     fig.legend(handles=legend_elements, loc='lower center', ncol=6,
-              fontsize=10, framealpha=0.95, bbox_to_anchor=(0.5, 0.01))
+              fontsize=9, framealpha=0.95, bbox_to_anchor=(0.5, 0.005))
     
-    # Adjust layout
-    plt.tight_layout(rect=[0, 0.04, 1, 0.96])
+    # Adjust layout for 24 maps
+    plt.tight_layout(rect=[0, 0.015, 1, 0.99])
     
     # Save
     fig.savefig(output_path, dpi=dpi, bbox_inches='tight', pad_inches=0.1)
@@ -336,6 +346,7 @@ def create_hourly_grid(sensors_df, hourly_df, bbox, region_name, month_str,
     
     print(f"  ✓ Grid map saved to: {output_path}")
     print(f"  Resolution: {dpi} DPI")
+    print(f"  Layout: 4 columns × 6 rows = 24 hours")
     
     return True
 
@@ -370,6 +381,8 @@ Examples:
                        help='Use existing cached data (skip API calls)')
     parser.add_argument('--data-dir', type=str, default='./purpleair_data',
                        help='Directory for cached data')
+    parser.add_argument('--data-prefix', type=str, default=None,
+                       help='Prefix for data filenames (default: same as --region, e.g., "golden_town")')
     
     args = parser.parse_args()
     
@@ -427,15 +440,16 @@ Examples:
     print("=" * 80)
     print(f"Region: {REGION_NAME}")
     print(f"Month: {month_name}")
-    print(f"Showing: 12am, 3am, 6am, 9am, 12pm, 3pm, 6pm, 9pm")
+    print(f"Layout: 6 rows × 4 columns = 24 hours (complete day)")
     print()
     
     # Create data directory
     os.makedirs(args.data_dir, exist_ok=True)
     
-    # File paths
-    sensors_csv = os.path.join(args.data_dir, f"{args.region}_sensors.csv")
-    data_csv = os.path.join(args.data_dir, f"{args.region}_{year}-{month:02d}_rawdata.csv")
+    # File paths - use data-prefix if specified, otherwise use region name
+    data_prefix = args.data_prefix or args.region
+    sensors_csv = os.path.join(args.data_dir, f"{data_prefix}_sensors.csv")
+    data_csv = os.path.join(args.data_dir, f"{data_prefix}_{year}-{month:02d}_rawdata.csv")
     
     # Step 1: Get sensors
     if args.use_cached and os.path.exists(sensors_csv):
