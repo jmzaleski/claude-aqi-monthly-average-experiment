@@ -45,6 +45,12 @@ import time
 # MST = UTC-7, MDT = UTC-8 (use -7 for most of the year)
 TIMEZONE_OFFSET_HOURS = -7  # Adjust to local time from UTC
 
+# DATA FILTERING: Exclude invalid/extreme PM2.5 readings
+# Sensor errors and malfunctions can produce unrealistic values  
+# PM2.5 >250 would show as AQI 300+ (Hazardous), likely sensor error
+MAX_VALID_PM25 = 250.0  # µg/m³ - strict cutoff for sensor errors
+MIN_VALID_PM25 = 0.0    # µg/m³ - negative values are sensor errors
+
 
 # AQI calculation constants (US EPA standard for PM2.5)
 AQI_BREAKPOINTS = [
@@ -188,6 +194,22 @@ def calculate_hourly_averages(sensors_df, historical_df):
     print("  Method: Average PM2.5 for each hour across all days in month")
     print(f"  Timezone: Applying {TIMEZONE_OFFSET_HOURS:+d} hour offset from UTC")
     
+    # FILTER OUT BAD DATA
+    # Exclude PM2.5 values that are sensor errors or malfunctions
+    initial_count = len(historical_df)
+    historical_df = historical_df[
+        (historical_df['pm2.5'].notna()) & 
+        (historical_df['pm2.5'] >= MIN_VALID_PM25) & 
+        (historical_df['pm2.5'] <= MAX_VALID_PM25)
+    ].copy()
+    filtered_count = initial_count - len(historical_df)
+    
+    if filtered_count > 0:
+        pct_filtered = (filtered_count / initial_count) * 100
+        print(f"  Filtered out {filtered_count} invalid readings ({pct_filtered:.1f}%)")
+        print(f"    (PM2.5 <{MIN_VALID_PM25} or >{MAX_VALID_PM25} µg/m³)")
+        print(f"  Remaining valid readings: {len(historical_df)}")
+    
     # Apply timezone offset to convert UTC to local time
     historical_df['local_timestamp'] = historical_df['timestamp'] + pd.Timedelta(hours=TIMEZONE_OFFSET_HOURS)
     
@@ -201,11 +223,96 @@ def calculate_hourly_averages(sensors_df, historical_df):
     daily_max_monthly_avg = daily_max.groupby('sensor_index')['pm2.5'].mean().reset_index()
     daily_max_monthly_avg.rename(columns={'pm2.5': 'monthly_avg_of_daily_max'}, inplace=True)
     
+    # PRINT DAILY MAX TABLE
+    print("\n" + "="*120)
+    print("DAILY MAX TABLE (AQI values - worst reading each day)")
+    print("="*120)
+    
+    # Filter to only dates in the target month (timezone shift can cause dates from adjacent months)
+    daily_max['month'] = pd.to_datetime(daily_max['date']).dt.month
+    daily_max['year'] = pd.to_datetime(daily_max['date']).dt.year
+    
+    # Determine the target month/year from the data
+    target_month = daily_max['month'].mode()[0]  # Most common month
+    target_year = daily_max['year'].mode()[0]    # Most common year
+    
+    daily_max_filtered = daily_max[
+        (daily_max['month'] == target_month) & 
+        (daily_max['year'] == target_year)
+    ].copy()
+    
+    print(f"  Filtered to {target_year}-{target_month:02d} (removed dates from adjacent months due to timezone shift)")
+    
+    # Add day of month column
+    daily_max_filtered['day'] = pd.to_datetime(daily_max_filtered['date']).dt.day
+    
+    # Convert PM2.5 to AQI
+    daily_max_filtered['aqi'] = daily_max_filtered['pm2.5'].apply(lambda x: calculate_aqi(x)[0])
+    
+    # Pivot to create sensor × day table
+    daily_pivot = daily_max_filtered.pivot(index='sensor_index', columns='day', values='aqi')
+    
+    # Add sensor names
+    daily_with_names = daily_pivot.merge(sensors_df[['sensor_index', 'name']], 
+                                         left_index=True, right_on='sensor_index')
+    daily_with_names = daily_with_names.set_index('name')
+    daily_with_names = daily_with_names.drop('sensor_index', axis=1)
+    
+    # Print header
+    print(f"{'Sensor':<25}", end='')
+    for day in range(1, 32):
+        print(f"{day:>4}", end='')
+    print()
+    print("-" * 120)
+    
+    # Print each sensor's daily max AQI
+    for sensor_name, row in daily_with_names.iterrows():
+        name_display = sensor_name[:23]
+        print(f"{name_display:<25}", end='')
+        
+        for day in range(1, 32):
+            val = row[day] if day in row.index else None
+            if pd.notna(val):
+                print(f"{int(val):>4}", end='')
+            else:
+                print(f"{'--':>4}", end='')
+        print()
+    
+    print("="*120)
+    print("NOTE: This shows the WORST reading each day (converted to AQI).")
+    print("Compare this to the hourly table below to understand timing patterns.")
+    print("="*120)
+    print()
+    
     # For each sensor, for each hour, calculate average PM2.5
     hourly_avg = historical_df.groupby(['sensor_index', 'hour'])['pm2.5'].mean().reset_index()
     hourly_avg.rename(columns={'pm2.5': 'avg_pm25'}, inplace=True)
     
-    # VALIDATION: For each sensor, find the max hourly average
+    # ADDITIONAL FILTERING: Remove hourly averages that are still >MAX_VALID_PM25
+    # (in case a particular hour had consistently high but valid readings that average to >250)
+    before_filter = len(hourly_avg)
+    
+    # Debug: show what we're filtering
+    bad_averages = hourly_avg[hourly_avg['avg_pm25'] > MAX_VALID_PM25]
+    if len(bad_averages) > 0:
+        print(f"\n  Filtering out {len(bad_averages)} hourly averages that exceed {MAX_VALID_PM25}:")
+        for _, row in bad_averages.iterrows():
+            sensor_name = sensors_df[sensors_df['sensor_index'] == row['sensor_index']]['name'].iloc[0]
+            print(f"    - {sensor_name}: hour {row['hour']}, PM2.5 = {row['avg_pm25']:.1f}")
+    
+    # Apply stricter filter - use < instead of <= to be safe
+    hourly_avg = hourly_avg[hourly_avg['avg_pm25'] < MAX_VALID_PM25].copy()
+    after_filter = len(hourly_avg)
+    
+    if before_filter > after_filter:
+        print(f"  Total filtered: {before_filter - after_filter} hourly averages")
+    
+    # Calculate AQI from average PM2.5
+    hourly_avg['aqi'] = hourly_avg['avg_pm25'].apply(lambda x: calculate_aqi(x)[0])
+    hourly_avg['category'] = hourly_avg['avg_pm25'].apply(lambda x: calculate_aqi(x)[1])
+    hourly_avg['color'] = hourly_avg['avg_pm25'].apply(lambda x: calculate_aqi(x)[2])
+    
+    # VALIDATION: For each sensor, find the max hourly average (for comparison with daily max)
     hourly_max_by_sensor = hourly_avg.groupby('sensor_index')['avg_pm25'].max().reset_index()
     hourly_max_by_sensor.rename(columns={'avg_pm25': 'max_hourly_avg'}, inplace=True)
     
@@ -263,8 +370,11 @@ def calculate_hourly_averages(sensors_df, historical_df):
     print("HOURLY AVERAGE TABLE (AQI values)")
     print("="*120)
     
+    # Safety check: Remove any remaining 500s before displaying
+    hourly_avg_display = hourly_avg[hourly_avg['aqi'] < 500].copy()
+    
     # Pivot to create sensor × hour table (using AQI values)
-    pivot_table = hourly_avg.pivot(index='sensor_index', columns='hour', values='aqi')
+    pivot_table = hourly_avg_display.pivot(index='sensor_index', columns='hour', values='aqi')
     
     # Add sensor names
     pivot_with_names = pivot_table.merge(sensors_df[['sensor_index', 'name']], 
