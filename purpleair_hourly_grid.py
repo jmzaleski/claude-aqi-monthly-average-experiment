@@ -184,7 +184,41 @@ def fetch_monthly_data(api_key, sensors_df, year, month, output_csv):
     return None
 
 
-def calculate_hourly_averages(sensors_df, historical_df, method='average'):
+def trimmed_mean(series, trim_fraction=0.1):
+    """
+    Calculate mean after removing top and bottom trim_fraction of values.
+    
+    Args:
+        series: pandas Series of values
+        trim_fraction: Fraction to trim from each end (default 0.1 = 10%)
+    
+    Returns:
+        Trimmed mean value
+    """
+    if len(series) == 0:
+        return np.nan
+    
+    # Sort values
+    sorted_vals = series.sort_values()
+    n = len(sorted_vals)
+    
+    # Calculate how many values to trim from each end
+    trim_count = int(n * trim_fraction)
+    
+    # If too few values, just return regular mean
+    if trim_count * 2 >= n:
+        return series.mean()
+    
+    # Trim and calculate mean
+    if trim_count > 0:
+        trimmed = sorted_vals.iloc[trim_count:-trim_count]
+    else:
+        trimmed = sorted_vals
+    
+    return trimmed.mean()
+
+
+def calculate_hourly_averages(sensors_df, historical_df, method='average', use_trimmed_mean=False):
     """
     Calculate hourly PM2.5 values for each hour of the day (0-23).
     
@@ -192,13 +226,18 @@ def calculate_hourly_averages(sensors_df, historical_df, method='average'):
         sensors_df: DataFrame with sensor info
         historical_df: DataFrame with historical PM2.5 readings
         method: 'average' = mean PM2.5 for each hour, 'max' = max PM2.5 for each hour
+        use_trimmed_mean: If True (and method='average'), remove top/bottom 10% before averaging
     
     Returns DataFrame with columns: sensor_index, hour, avg_pm25, aqi, color
     """
     method_label = "Average" if method == 'average' else "Maximum"
+    if use_trimmed_mean and method == 'average':
+        method_label = "Trimmed Average (excluding top/bottom 10%)"
     
     print(f"\nCalculating hourly {method_label.lower()} values...")
     print(f"  Method: {method_label} PM2.5 for each hour across all days in month")
+    if use_trimmed_mean and method == 'average':
+        print(f"  Trimming: Removing top 10% and bottom 10% of readings per hour")
     print(f"  Timezone: Applying {TIMEZONE_OFFSET_HOURS:+d} hour offset from UTC")
     
     # FILTER OUT BAD DATA
@@ -293,7 +332,12 @@ def calculate_hourly_averages(sensors_df, historical_df, method='average'):
     
     # For each sensor, for each hour, calculate average or max PM2.5
     if method == 'average':
-        hourly_calc = historical_df.groupby(['sensor_index', 'hour'])['pm2.5'].mean().reset_index()
+        if use_trimmed_mean:
+            # Use trimmed mean (remove top/bottom 10%)
+            hourly_calc = historical_df.groupby(['sensor_index', 'hour'])['pm2.5'].apply(trimmed_mean).reset_index()
+        else:
+            # Regular mean
+            hourly_calc = historical_df.groupby(['sensor_index', 'hour'])['pm2.5'].mean().reset_index()
     else:  # method == 'max'
         hourly_calc = historical_df.groupby(['sensor_index', 'hour'])['pm2.5'].max().reset_index()
     
@@ -607,6 +651,8 @@ Examples:
     parser.add_argument('--hourly-method', type=str, default='average',
                        choices=['average', 'max'],
                        help='How to calculate hourly values: average (default) or max')
+    parser.add_argument('--trim-outliers', action='store_true',
+                       help='Remove top 10%% and bottom 10%% of readings before averaging (trimmed mean)')
     
     args = parser.parse_args()
     
@@ -665,7 +711,10 @@ Examples:
     print(f"Region: {REGION_NAME}")
     print(f"Month: {month_name}")
     print(f"Layout: 6 rows × 4 columns = 24 hours (complete day)")
-    print(f"Method: Hourly {args.hourly_method} (use --hourly-method to change)")
+    method_desc = args.hourly_method
+    if args.trim_outliers and args.hourly_method == 'average':
+        method_desc += " (trimmed - excludes top/bottom 10%)"
+    print(f"Method: Hourly {method_desc}")
     print()
     
     # Create data directory
@@ -703,7 +752,9 @@ Examples:
             sys.exit(1)
     
     # Step 3: Calculate hourly values (average or max based on --hourly-method)
-    hourly_df = calculate_hourly_averages(sensors_df, historical_df, method=args.hourly_method)
+    hourly_df = calculate_hourly_averages(sensors_df, historical_df, 
+                                          method=args.hourly_method,
+                                          use_trimmed_mean=args.trim_outliers)
     
     # Step 4: Create grid map
     success = create_hourly_grid(
