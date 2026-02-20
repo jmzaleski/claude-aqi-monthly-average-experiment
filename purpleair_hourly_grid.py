@@ -184,14 +184,21 @@ def fetch_monthly_data(api_key, sensors_df, year, month, output_csv):
     return None
 
 
-def calculate_hourly_averages(sensors_df, historical_df):
+def calculate_hourly_averages(sensors_df, historical_df, method='average'):
     """
-    Calculate average PM2.5 for each hour of the day (0-23).
+    Calculate hourly PM2.5 values for each hour of the day (0-23).
+    
+    Args:
+        sensors_df: DataFrame with sensor info
+        historical_df: DataFrame with historical PM2.5 readings
+        method: 'average' = mean PM2.5 for each hour, 'max' = max PM2.5 for each hour
     
     Returns DataFrame with columns: sensor_index, hour, avg_pm25, aqi, color
     """
-    print("\nCalculating hourly averages...")
-    print("  Method: Average PM2.5 for each hour across all days in month")
+    method_label = "Average" if method == 'average' else "Maximum"
+    
+    print(f"\nCalculating hourly {method_label.lower()} values...")
+    print(f"  Method: {method_label} PM2.5 for each hour across all days in month")
     print(f"  Timezone: Applying {TIMEZONE_OFFSET_HOURS:+d} hour offset from UTC")
     
     # FILTER OUT BAD DATA
@@ -284,37 +291,41 @@ def calculate_hourly_averages(sensors_df, historical_df):
     print("="*120)
     print()
     
-    # For each sensor, for each hour, calculate average PM2.5
-    hourly_avg = historical_df.groupby(['sensor_index', 'hour'])['pm2.5'].mean().reset_index()
-    hourly_avg.rename(columns={'pm2.5': 'avg_pm25'}, inplace=True)
+    # For each sensor, for each hour, calculate average or max PM2.5
+    if method == 'average':
+        hourly_calc = historical_df.groupby(['sensor_index', 'hour'])['pm2.5'].mean().reset_index()
+    else:  # method == 'max'
+        hourly_calc = historical_df.groupby(['sensor_index', 'hour'])['pm2.5'].max().reset_index()
     
-    # ADDITIONAL FILTERING: Remove hourly averages that are still >MAX_VALID_PM25
+    hourly_calc.rename(columns={'pm2.5': 'avg_pm25'}, inplace=True)  # Keep column name for compatibility
+    
+    # ADDITIONAL FILTERING: Remove hourly values that are still >MAX_VALID_PM25
     # (in case a particular hour had consistently high but valid readings that average to >250)
-    before_filter = len(hourly_avg)
+    before_filter = len(hourly_calc)
     
     # Debug: show what we're filtering
-    bad_averages = hourly_avg[hourly_avg['avg_pm25'] > MAX_VALID_PM25]
-    if len(bad_averages) > 0:
-        print(f"\n  Filtering out {len(bad_averages)} hourly averages that exceed {MAX_VALID_PM25}:")
-        for _, row in bad_averages.iterrows():
+    bad_values = hourly_calc[hourly_calc['avg_pm25'] > MAX_VALID_PM25]
+    if len(bad_values) > 0:
+        print(f"\n  Filtering out {len(bad_values)} hourly values that exceed {MAX_VALID_PM25}:")
+        for _, row in bad_values.iterrows():
             sensor_name = sensors_df[sensors_df['sensor_index'] == row['sensor_index']]['name'].iloc[0]
             print(f"    - {sensor_name}: hour {row['hour']}, PM2.5 = {row['avg_pm25']:.1f}")
     
     # Apply stricter filter - use < instead of <= to be safe
-    hourly_avg = hourly_avg[hourly_avg['avg_pm25'] < MAX_VALID_PM25].copy()
-    after_filter = len(hourly_avg)
+    hourly_calc = hourly_calc[hourly_calc['avg_pm25'] < MAX_VALID_PM25].copy()
+    after_filter = len(hourly_calc)
     
     if before_filter > after_filter:
-        print(f"  Total filtered: {before_filter - after_filter} hourly averages")
+        print(f"  Total filtered: {before_filter - after_filter} hourly values")
     
-    # Calculate AQI from average PM2.5
-    hourly_avg['aqi'] = hourly_avg['avg_pm25'].apply(lambda x: calculate_aqi(x)[0])
-    hourly_avg['category'] = hourly_avg['avg_pm25'].apply(lambda x: calculate_aqi(x)[1])
-    hourly_avg['color'] = hourly_avg['avg_pm25'].apply(lambda x: calculate_aqi(x)[2])
+    # Calculate AQI from PM2.5
+    hourly_calc['aqi'] = hourly_calc['avg_pm25'].apply(lambda x: calculate_aqi(x)[0])
+    hourly_calc['category'] = hourly_calc['avg_pm25'].apply(lambda x: calculate_aqi(x)[1])
+    hourly_calc['color'] = hourly_calc['avg_pm25'].apply(lambda x: calculate_aqi(x)[2])
     
-    # VALIDATION: For each sensor, find the max hourly average (for comparison with daily max)
-    hourly_max_by_sensor = hourly_avg.groupby('sensor_index')['avg_pm25'].max().reset_index()
-    hourly_max_by_sensor.rename(columns={'avg_pm25': 'max_hourly_avg'}, inplace=True)
+    # VALIDATION: For each sensor, find the max hourly value (for comparison with daily max)
+    hourly_max_by_sensor = hourly_calc.groupby('sensor_index')['avg_pm25'].max().reset_index()
+    hourly_max_by_sensor.rename(columns={'avg_pm25': 'max_hourly_value'}, inplace=True)
     
     # Compare the two methods
     validation = hourly_max_by_sensor.merge(daily_max_monthly_avg, on='sensor_index')
@@ -322,13 +333,13 @@ def calculate_hourly_averages(sensors_df, historical_df):
     
     print("\n  Sensor-by-sensor validation:")
     print("  " + "="*70)
-    print(f"  {'Sensor':<20} {'Max Hourly Avg':>15} {'Monthly Avg Daily Max':>20}")
+    print(f"  {'Sensor':<20} {'Max Hourly ' + method_label:>15} {'Monthly Avg Daily Max':>20}")
     print("  " + "-"*70)
     
     all_good = True
     for _, row in validation.iterrows():
         sensor_name = row['name'][:18]  # Truncate long names
-        max_hourly = row['max_hourly_avg']
+        max_hourly = row['max_hourly_value']
         daily_max_avg = row['monthly_avg_of_daily_max']
         
         # The max hourly average should be close to (but likely less than) the monthly avg of daily maxes
@@ -356,25 +367,20 @@ def calculate_hourly_averages(sensors_df, historical_df):
     else:
         print("\n  ✓ Validation passed: Hourly and daily calculations are consistent")
     
-    # Calculate AQI from average PM2.5
-    hourly_avg['aqi'] = hourly_avg['avg_pm25'].apply(lambda x: calculate_aqi(x)[0])
-    hourly_avg['category'] = hourly_avg['avg_pm25'].apply(lambda x: calculate_aqi(x)[1])
-    hourly_avg['color'] = hourly_avg['avg_pm25'].apply(lambda x: calculate_aqi(x)[2])
-    
     # Merge with sensor locations
-    result = hourly_avg.merge(sensors_df, on='sensor_index', how='left')
+    result = hourly_calc.merge(sensors_df, on='sensor_index', how='left')
     
     # PRINT DETAILED HOURLY TABLE FOR DEBUGGING
-    print(f"\n  Calculated hourly averages for {len(sensors_df)} sensors × 24 hours")
+    print(f"\n  Calculated hourly {method_label.lower()} values for {len(sensors_df)} sensors × 24 hours")
     print("\n" + "="*120)
-    print("HOURLY AVERAGE TABLE (AQI values)")
+    print(f"HOURLY {method_label.upper()} TABLE (AQI values)")
     print("="*120)
     
     # Safety check: Remove any remaining 500s before displaying
-    hourly_avg_display = hourly_avg[hourly_avg['aqi'] < 500].copy()
+    hourly_display = hourly_calc[hourly_calc['aqi'] < 500].copy()
     
     # Pivot to create sensor × hour table (using AQI values)
-    pivot_table = hourly_avg_display.pivot(index='sensor_index', columns='hour', values='aqi')
+    pivot_table = hourly_display.pivot(index='sensor_index', columns='hour', values='aqi')
     
     # Add sensor names
     pivot_with_names = pivot_table.merge(sensors_df[['sensor_index', 'name']], 
@@ -413,9 +419,13 @@ def calculate_hourly_averages(sensors_df, historical_df):
         print()
     
     print("="*120)
-    print("\nNOTE: Compare these hourly AQI values to your monthly average AQI.")
-    print("If monthly average (e.g., 156) is MUCH higher than any hourly value,")
-    print("it means daily peaks occur at DIFFERENT hours on different days.")
+    print(f"\nNOTE: Compare these hourly {method_label.upper()} AQI values to your monthly average AQI.")
+    if method == 'average':
+        print("If monthly average (e.g., 156) is MUCH higher than any hourly average,")
+        print("it means daily peaks occur at DIFFERENT hours on different days.")
+    else:  # method == 'max'
+        print("These values show the WORST PM2.5 reading for each hour across all days.")
+        print("Should be closer to monthly average of daily maxes than hourly averages.")
     print("="*120)
     print()
     
@@ -594,6 +604,9 @@ Examples:
                        help='Directory for cached data')
     parser.add_argument('--data-prefix', type=str, default=None,
                        help='Prefix for data filenames (default: same as --region, e.g., "golden_town")')
+    parser.add_argument('--hourly-method', type=str, default='average',
+                       choices=['average', 'max'],
+                       help='How to calculate hourly values: average (default) or max')
     
     args = parser.parse_args()
     
@@ -652,6 +665,7 @@ Examples:
     print(f"Region: {REGION_NAME}")
     print(f"Month: {month_name}")
     print(f"Layout: 6 rows × 4 columns = 24 hours (complete day)")
+    print(f"Method: Hourly {args.hourly_method} (use --hourly-method to change)")
     print()
     
     # Create data directory
@@ -688,8 +702,8 @@ Examples:
             print("Error: No historical data retrieved!")
             sys.exit(1)
     
-    # Step 3: Calculate hourly averages
-    hourly_df = calculate_hourly_averages(sensors_df, historical_df)
+    # Step 3: Calculate hourly values (average or max based on --hourly-method)
+    hourly_df = calculate_hourly_averages(sensors_df, historical_df, method=args.hourly_method)
     
     # Step 4: Create grid map
     success = create_hourly_grid(
