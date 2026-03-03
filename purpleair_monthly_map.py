@@ -211,6 +211,7 @@ def calculate_monthly_averages(sensors_df, historical_df):
         ('best_day_pm25', 'min'),      # Best of the daily worst readings
         ('days_with_data', 'count')    # Number of days with data
     ]).reset_index()
+
     
     # Merge with sensor locations
     result = sensors_df.merge(monthly_avg, on='sensor_index', how='left')
@@ -229,6 +230,9 @@ def calculate_monthly_averages(sensors_df, historical_df):
     if valid_count > 0:
         avg_days = result['days_with_data'].mean()
         print(f"  Average days with data per sensor: {avg_days:.1f}")
+
+    print("daily_worst\n", daily_worst.to_string())
+        
     
     return result
 
@@ -331,7 +335,7 @@ def create_monthly_map(sensors_avg_df, bbox, region_name, month_str, output_path
     ax.set_ylabel('Latitude', fontsize=14, fontweight='bold')
     
     # Title
-    title = f'Monthly Average Air Quality Index (AQI)\n{region_name} - {month_str}\n(Average of Daily Worst Readings - EPA Method)'
+    title = f'Monthly Average Air Quality Index (AQI)\n{region_name} - {month_str}\n(Average of Daily **Worst** Readings - EPA Method)'
     ax.set_title(title, fontsize=18, fontweight='bold', pad=20)
     
     ax.grid(True, alpha=0.3, linestyle='--')
