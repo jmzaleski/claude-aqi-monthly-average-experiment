@@ -25,11 +25,14 @@ Usage
       --heatmap-out golden_heatmap.html \
       --scatter-out golden_scatter.html
 
-Cache file expected
--------------------
-  {data_dir}/{data_prefix}_{YYYY-MM}_rawdata.csv
+Cache files expected
+--------------------
+  {data_dir}/{data_prefix}_{YYYY-MM}_rawdata.csv   (required)
+    columns: sensor_index, timestamp, pm2.5
 
-  Required columns: sensor_index, timestamp, pm2.5
+  {data_dir}/{data_prefix}_sensors.csv             (optional, for sensor names)
+    columns: sensor_index, name  (plus any others — latitude, longitude, etc.)
+    If absent, sensor IDs are used as labels instead.
 """
 
 import argparse
@@ -84,7 +87,8 @@ SCATTER_COLORS = [
 ]
 
 
-def build_heatmap_html(df: pd.DataFrame, month_str: str, excluded: list[int]) -> str:
+def build_heatmap_html(df: pd.DataFrame, month_str: str, excluded: list[int],
+                       name_map: dict) -> str:
     """Build the sensor × hour AQI heatmap HTML."""
 
     sensors = sorted(df["sensor_index"].unique())
@@ -102,8 +106,12 @@ def build_heatmap_html(df: pd.DataFrame, month_str: str, excluded: list[int]) ->
             heatmap[str(sid)][h] = pm25_to_aqi(avg_pm)
 
     sensor_strs = [str(s) for s in sensors]
+    # Build display labels: prefer name from sensors CSV, fall back to ID string
+    sensor_labels = {str(s): name_map.get(s, str(s)) for s in sensors}
+
     data_js = json.dumps({
         "sensors": sensor_strs,
+        "labels": sensor_labels,
         "data": heatmap,
         "categories": AQI_CATEGORIES,
         "sensorColors": {str(s): color_map[s] for s in sensors},
@@ -111,7 +119,8 @@ def build_heatmap_html(df: pd.DataFrame, month_str: str, excluded: list[int]) ->
 
     excluded_note = ""
     if excluded:
-        excluded_note = f" &nbsp;|&nbsp; Excluded (faulty): {', '.join(str(e) for e in excluded)}"
+        excl_names = [name_map.get(e, str(e)) for e in excluded]
+        excluded_note = f" &nbsp;|&nbsp; Excluded (faulty): {', '.join(excl_names)}"
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -188,7 +197,7 @@ html += '</tr><tr><th class="row-label">Sensor</th>';
 for (let h=0;h<24;h++) html += `<th style="font-size:10px;color:#ccc;font-weight:500;min-width:33px">${{hourLabels[h]}}</th>`;
 html += '</tr></thead><tbody>';
 D.sensors.forEach(sid => {{
-  html += `<tr><td class="sensor-label">${{sid}}</td>`;
+  html += `<tr><td class="sensor-label">${{D.labels[sid]}}</td>`;
   for (let h=0;h<24;h++) {{
     const v = D.data[sid][h];
     if (v === null) {{ html += '<td style="background:#f0f0f0;color:#ccc">—</td>'; continue; }}
@@ -218,7 +227,7 @@ tbl.addEventListener('mouseover', e => {{
   const td = e.target.closest('td[data-sensor]'); if (!td) {{ tip.style.opacity=0; return; }}
   const h = parseInt(td.dataset.hour);
   const period = h<6?'Night':h<12?'Morning':h<18?'Afternoon':'Evening';
-  tip.textContent = `Sensor ${{td.dataset.sensor}} · ${{hourLabels[h]}} (${{period}}) · AQI ${{td.dataset.aqi}} — ${{td.dataset.cat}}`;
+  tip.textContent = `${{D.labels[td.dataset.sensor]}} · ${{hourLabels[h]}} (${{period}}) · AQI ${{td.dataset.aqi}} — ${{td.dataset.cat}}`;  
   tip.style.opacity = 1;
 }});
 tbl.addEventListener('mousemove', e => {{
@@ -231,7 +240,8 @@ tbl.addEventListener('mouseleave', () => tip.style.opacity=0);
     return html
 
 
-def build_scatter_html(df: pd.DataFrame, month_str: str, excluded: list[int]) -> str:
+def build_scatter_html(df: pd.DataFrame, month_str: str, excluded: list[int],
+                       name_map: dict) -> str:
     """Build the raw-scatter + hourly-median line chart HTML."""
 
     sensors = sorted(df["sensor_index"].unique())
@@ -275,11 +285,13 @@ def build_scatter_html(df: pd.DataFrame, month_str: str, excluded: list[int]) ->
         "scatter": scatter_data,
         "lines": line_data,
         "colors": {str(s): color_map[s] for s in sensors},
+        "labels": {str(s): name_map.get(s, str(s)) for s in sensors},
     })
 
     excluded_note = ""
     if excluded:
-        excluded_note = f" | Excluded: {', '.join(str(e) for e in excluded)}"
+        excl_names = [name_map.get(e, str(e)) for e in excluded]
+        excluded_note = f" | Excluded: {', '.join(excl_names)}"
 
     # JS block written as a raw string to avoid f-string / brace conflicts
     js_block = r"""
@@ -339,7 +351,7 @@ const chart = new Chart(document.getElementById("chart").getContext("2d"), {
     plugins: {
       legend: {display:false},
       tooltip: {callbacks: {
-        label: i => "Sensor "+i.dataset._sensor+" ("+(i.dataset._kind==="scatter"?"raw":"median")+"): AQI "+Math.round(i.parsed.y)
+        label: i => D.labels[i.dataset._sensor]+" ("+(i.dataset._kind==="scatter"?"raw":"median")+"): AQI "+Math.round(i.parsed.y)
       }},
       zoom: {
         zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:"x"},
@@ -355,7 +367,7 @@ const hidden = new Set();
 D.sensors.forEach(sid => {
   const el = document.createElement("div");
   el.className = "legend-item";
-  el.innerHTML = "<div class='legend-dot' style='background:"+D.colors[sid]+"'></div>"+sid;
+  el.innerHTML = "<div class='legend-dot' style='background:"+D.colors[sid]+"'></div>"+D.labels[sid];
   el.onclick = () => {
     hidden.has(sid) ? hidden.delete(sid) : hidden.add(sid);
     el.classList.toggle("hidden");
@@ -485,6 +497,23 @@ Examples:
         print("Check --data-dir and --data-prefix match your file layout.", file=sys.stderr)
         sys.exit(1)
 
+    # --- load sensor names (optional) ---
+    sensors_csv = os.path.join(args.data_dir, f"{args.data_prefix}_sensors.csv")
+    name_map = {}
+    if os.path.exists(sensors_csv):
+        try:
+            sdf = pd.read_csv(sensors_csv)
+            if "sensor_index" in sdf.columns and "name" in sdf.columns:
+                name_map = dict(zip(sdf["sensor_index"].astype(int), sdf["name"].astype(str)))
+                print(f"Loaded {len(name_map)} sensor names from {sensors_csv}")
+            else:
+                print(f"Warning: {sensors_csv} missing 'sensor_index' or 'name' column — using IDs")
+        except Exception as e:
+            print(f"Warning: could not read {sensors_csv} ({e}) — using IDs")
+    else:
+        print(f"Note: no sensors file found at {sensors_csv} — using sensor IDs as labels")
+    print()
+
     # --- default output filenames ---
     heatmap_out = args.heatmap_out or f"{args.data_prefix}_{args.month}_heatmap.html"
     scatter_out = args.scatter_out or f"{args.data_prefix}_{args.month}_scatter.html"
@@ -495,7 +524,8 @@ Examples:
     print(f"  Month       : {month_str}")
     print(f"  Source CSV  : {rawdata_csv}")
     if args.exclude:
-        print(f"  Excluded    : {args.exclude}")
+        excl_display = [name_map.get(e, str(e)) for e in args.exclude]
+        print(f"  Excluded    : {excl_display}")
     print(f"  Heatmap out : {heatmap_out}")
     print(f"  Scatter out : {scatter_out}")
     print()
@@ -523,14 +553,14 @@ Examples:
 
     # --- build and write heatmap ---
     print("Building heatmap...", end=" ", flush=True)
-    heatmap_html = build_heatmap_html(df, month_str, args.exclude)
+    heatmap_html = build_heatmap_html(df, month_str, args.exclude, name_map)
     with open(heatmap_out, "w", encoding="utf-8") as f:
         f.write(heatmap_html)
     print(f"written → {heatmap_out}")
 
     # --- build and write scatter ---
     print("Building scatter...", end=" ", flush=True)
-    scatter_html = build_scatter_html(df, month_str, args.exclude)
+    scatter_html = build_scatter_html(df, month_str, args.exclude, name_map)
     with open(scatter_out, "w", encoding="utf-8") as f:
         f.write(scatter_html)
     print(f"written → {scatter_out}")

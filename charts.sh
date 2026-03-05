@@ -5,7 +5,8 @@ USE_CACHED="--use-cached"
 
 MON_STR=feb
 MONTH=2026-2
-OUTPUT=$MON_STR"2026_charts.png"
+HEATMAP_OUT=$MON_STR"2026_heatmap.html"
+SCATTER_OUT=$MON_STR"2026_scatter.html"
 
 set -x
 python3  purpleair_aqi_charts.py \
@@ -13,15 +14,15 @@ python3  purpleair_aqi_charts.py \
 		 --month $MONTH \
 		 --data-prefix golden_town \
 		 --exclude 127469 \
-		 --heatmap-out ./$MON_STR-heatmap.html \
-		 --scatter-out ./$MON_STR-scatter.html
+		 --heatmap-out $HEATMAP_OUT \
+		 --scatter-out $SCATTER_OUT
 
 
 # --background purple-air-backgound-townsite.jpeg
 
-read -p "hit return to open $OUTPUT > " JUNK
+read -p "hit return to open $HEATMAP_OUT $SCATTER_OUT > " JUNK
 case $JUNK in
 	n*)exit
 	   ;;
 esac
-open $OUTPUT
+open $HEATMAP_OUT && open $SCATTER_OUT
